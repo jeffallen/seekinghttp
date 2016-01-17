@@ -32,10 +32,15 @@ func main() {
 
 	if strings.HasSuffix(flag.Arg(0), ".zip") {
 		sz, err := r.Size()
+		if err != nil {
+			log.Fatal(err)
+		}
+
 		z, err := zip.NewReader(r, sz)
 		if err != nil {
 			log.Fatal(err)
 		}
+
 		for _, f := range z.File {
 			log.Print("File: ", f.FileHeader.Name)
 		}

@@ -10,8 +10,8 @@ import (
 	"os"
 )
 
-// SeekingHTTP uses a series of HTTP GETs to implement
-// io.ReadSeeker `nd io.ReaderAt.
+// SeekingHTTP uses a series of HTTP GETs with Ranger headers
+// to implement io.ReadSeeker and io.ReaderAt.
 type SeekingHTTP struct {
 	URL    string
 	url    *url.URL
@@ -53,8 +53,7 @@ func (s *SeekingHTTP) newreq() (*http.Request, error) {
 	}, nil
 }
 
-func (s *SeekingHTTP) fmtRange(l int64) string {
-	from := s.offset
+func fmtRange(from, l int64) string {
 	var to int64
 	if l == 0 {
 		to = from
@@ -65,14 +64,33 @@ func (s *SeekingHTTP) fmtRange(l int64) string {
 }
 
 // ReadAt reads len(buf) bytes into buf starting at offset off.
-// It is not safe to call ReadAt and Seek concurrently.
 func (s *SeekingHTTP) ReadAt(buf []byte, off int64) (int, error) {
-	cur, _ := s.Seek(0, os.SEEK_CUR)
-	s.Seek(off, os.SEEK_SET)
-	defer s.Seek(cur, os.SEEK_SET)
-	return s.Read(buf)
+	log.Printf("got readat len %v off %v", len(buf), off)
+	req, err := s.newreq()
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Add("Range", fmtRange(off, int64(len(buf))))
+
+	resp, err := s.Client.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusPartialContent {
+		n, err := resp.Body.Read(buf)
+		resp.Body.Close()
+		// HTTP is trying to tell us, "that's all". Which is fine, but we don't
+		// want callers to think it is EOF, it's not.
+		if err == io.EOF && n == len(buf) {
+			err = nil
+		}
+		//		log.Printf("%#v", buf)
+		return n, err
+	}
+	return 0, io.EOF
 }
 
+// If they did not give us an HTTP Client, use the default one.
 func (s *SeekingHTTP) init() error {
 	if s.Client == nil {
 		s.Client = http.DefaultClient
@@ -82,40 +100,22 @@ func (s *SeekingHTTP) init() error {
 }
 
 func (s *SeekingHTTP) Read(buf []byte) (int, error) {
-	//log.Printf("got read for %v bytes @%v", len(buf), s.offset)
+	log.Printf("got read len %v", len(buf))
 	if err := s.init(); err != nil {
 		return 0, err
 	}
 
-	req, err := s.newreq()
-	if err != nil {
-		return 0, err
-	}
-	req.Header.Del("Range")
-	req.Header.Add("Range", s.fmtRange(int64(len(buf))))
-
-	resp, err := s.Client.Do(req)
-	if err != nil {
-		return 0, err
-	}
-	if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusPartialContent {
-		n, err := resp.Body.Read(buf)
-		resp.Body.Close()
+	n, err := s.ReadAt(buf, s.offset)
+	if err == nil {
 		s.offset += int64(n)
-		// HTTP is trying to tell us, "that's all". Which is fine, but we don't
-		// want callers to think it is EOF, it's not.
-		if err == io.EOF && n == len(buf) {
-			err = nil
-		}
-		return n, err
 	}
-	log.Printf("Status code: %v", resp.StatusCode)
-	return 0, io.EOF
+
+	return n, err
 }
 
 // Seek sets the offset for the next Read.
 func (s *SeekingHTTP) Seek(offset int64, whence int) (int64, error) {
-	//log.Printf("got seek %v %v", offset, whence)
+	log.Printf("got seek %v %v", offset, whence)
 	switch whence {
 	case os.SEEK_SET:
 		s.offset = offset
@@ -149,5 +149,6 @@ func (s *SeekingHTTP) Size() (int64, error) {
 	if resp.ContentLength < 0 {
 		return 0, errors.New("no content length for Size()")
 	}
+	log.Printf("size %v", resp.ContentLength)
 	return resp.ContentLength, nil
 }
