@@ -77,9 +77,7 @@ func (s *SeekingHTTP) ReadAt(buf []byte, off int64) (int, error) {
 		return 0, err
 	}
 
-	// Fetch more than what they asked for to reduce round-trips
-	wanted := 10 * len(buf)
-	rng := fmtRange(off, int64(wanted))
+	rng := fmtRange(off, int64(len(buf)))
 	req.Header.Add("Range", rng)
 
 	if s.Debug {
