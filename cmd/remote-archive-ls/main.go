@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"archive/zip"
 	"flag"
+	"fmt"
 	"io"
 	"log"
 	"strings"
@@ -11,9 +12,16 @@ import (
 	"github.com/jeffallen/seekinghttp"
 )
 
+var debug = flag.Bool("debug", false, "enable verbose output")
+
 func main() {
 	flag.Parse()
+	if flag.NArg() == 0 {
+		log.Fatal("Expected a URL as the first argument.")
+	}
+
 	r := seekinghttp.New(flag.Arg(0))
+	r.Debug = *debug
 
 	if strings.HasSuffix(flag.Arg(0), ".tar") {
 		t := tar.NewReader(r)
@@ -25,7 +33,7 @@ func main() {
 			if err != nil {
 				log.Fatal(err)
 			}
-			log.Print("File: ", h.Name)
+			fmt.Println("File:", h.Name)
 		}
 		return
 	}
@@ -47,5 +55,5 @@ func main() {
 		return
 	}
 
-	log.Fatal("Unknown file type.")
+	log.Fatal("Unknown file type. URL does not end in .tar or .zip")
 }
