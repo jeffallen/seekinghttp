@@ -14,13 +14,11 @@ import (
 // SeekingHTTP uses a series of HTTP GETs with Range headers
 // to implement io.ReadSeeker and io.ReaderAt.
 type SeekingHTTP struct {
-	URL        string
-	url        *url.URL
-	Client     *http.Client
-	Debug      bool
-	offset     int64
-	last       *bytes.Buffer
-	lastOffset int64
+	URL    string
+	url    *url.URL
+	Client *http.Client
+	Debug  bool
+	offset int64
 }
 
 // Compile-time check of interface implementations.
@@ -73,27 +71,6 @@ func (s *SeekingHTTP) ReadAt(buf []byte, off int64) (int, error) {
 	if s.Debug {
 		log.Printf("ReadAt len %v off %v", len(buf), off)
 	}
-	if s.last != nil && off > s.lastOffset {
-		end := off + int64(len(buf))
-		if end < s.lastOffset+int64(s.last.Len()) {
-			start := off - s.lastOffset
-			if s.Debug {
-				log.Printf("cache hit: range (%v-%v) is within cache (%v-%v)", off, off+int64(len(buf)), s.lastOffset, s.lastOffset+int64(s.last.Len()))
-			}
-			copy(buf, s.last.Bytes()[start:end-s.lastOffset])
-			return len(buf), nil
-		}
-	}
-
-	if s.last != nil {
-		if s.Debug {
-			log.Printf("cache miss: range (%v-%v) is NOT within cache (%v-%v)", off, off+int64(len(buf)), s.lastOffset, s.lastOffset+int64(s.last.Len()))
-		}
-	} else {
-		if s.Debug {
-			log.Printf("cache miss: cache empty")
-		}
-	}
 
 	req, err := s.newreq()
 	if err != nil {
@@ -104,15 +81,6 @@ func (s *SeekingHTTP) ReadAt(buf []byte, off int64) (int, error) {
 	wanted := 10 * len(buf)
 	rng := fmtRange(off, int64(wanted))
 	req.Header.Add("Range", rng)
-
-	if s.last == nil {
-		// Cache does not exist yet. So make it.
-		s.last = &bytes.Buffer{}
-	} else {
-		// Cache is getting replaced. Bring it back to zero bytes, but
-		// keep the underlying []byte, since we'll reuse it right away.
-		s.last.Reset()
-	}
 
 	if s.Debug {
 		log.Println("Start HTTP GET with Range:", rng)
@@ -128,16 +96,16 @@ func (s *SeekingHTTP) ReadAt(buf []byte, off int64) (int, error) {
 		if s.Debug {
 			log.Println("HTTP ok.")
 		}
-		s.last.ReadFrom(resp.Body)
+		var result = &bytes.Buffer{}
+		result.ReadFrom(resp.Body)
 		resp.Body.Close()
-		s.lastOffset = off
 		var n int
-		if s.last.Len() < len(buf) {
-			n = s.last.Len()
-			copy(buf, s.last.Bytes()[0:n])
+		if result.Len() < len(buf) {
+			n = result.Len()
+			copy(buf, result.Bytes()[0:n])
 		} else {
 			n = len(buf)
-			copy(buf, s.last.Bytes())
+			copy(buf, result.Bytes())
 		}
 
 		// HTTP is trying to tell us, "that's all". Which is fine, but we don't
