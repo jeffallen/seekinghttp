@@ -14,8 +14,8 @@ import (
 // to implement io.ReadSeeker and io.ReaderAt.
 type SeekingHTTP struct {
 	URL    string
-	url    *url.URL
 	Client *http.Client
+	url    *url.URL
 	offset int64
 }
 
