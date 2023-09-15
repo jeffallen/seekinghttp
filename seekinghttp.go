@@ -178,11 +178,11 @@ func (s *SeekingHTTP) Seek(offset int64, whence int) (int64, error) {
 		log.Printf("got seek %v %v", offset, whence)
 	}
 	switch whence {
-	case os.SEEK_SET:
+	case io.SeekStart:
 		s.offset = offset
-	case os.SEEK_CUR:
+	case io.SeekCurrent:
 		s.offset += offset
-	case os.SEEK_END:
+	case io.SeekEnd:
 		return 0, errors.New("whence relative to end not impl yet")
 	default:
 		return 0, os.ErrInvalid
