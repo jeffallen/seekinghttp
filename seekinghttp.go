@@ -145,7 +145,8 @@ func (s *SeekingHTTP) ReadAt(buf []byte, off int64) (int, error) {
 		if err == io.EOF && n == len(buf) {
 			err = nil
 		}
-		return len(buf), err
+
+		return n, err
 	}
 	return 0, io.EOF
 }
