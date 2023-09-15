@@ -81,7 +81,7 @@ func fmtRange(from, l int64) string {
 }
 
 // ReadAt reads len(buf) bytes into buf starting at offset off.
-func (s *SeekingHTTP) ReadAt(buf []byte, off int64) (int, error) {
+func (s *SeekingHTTP) ReadAt(buf []byte, off int64) (n int, err error) {
 	if s.Logger != nil {
 		s.Logger.Debugf("ReadAt len %v off %v", len(buf), off)
 	}
@@ -137,17 +137,20 @@ func (s *SeekingHTTP) ReadAt(buf []byte, off int64) (int, error) {
 		return 0, err
 	}
 
+	// body needs to be closed, even if responses that aren't 200 or 206
+	defer func(body io.ReadCloser) {
+		cErr := body.Close()
+		if err == nil && cErr != nil {
+			err = cErr
+		}
+	}(resp.Body)
+
 	if s.Logger != nil {
 		s.Logger.Infof("Response status: %v", resp.StatusCode)
 	}
 
 	if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusPartialContent {
 		_, err := s.last.ReadFrom(resp.Body)
-		if err != nil {
-			return 0, err
-		}
-
-		err = resp.Body.Close()
 		if err != nil {
 			return 0, err
 		}
