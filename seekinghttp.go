@@ -5,22 +5,30 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"net/url"
 	"os"
 )
 
+type HttpClient interface {
+	Do(req *http.Request) (*http.Response, error)
+}
+
+type Logger interface {
+	Infof(format string, args ...interface{})
+	Debugf(format string, args ...interface{})
+}
+
 // SeekingHTTP uses a series of HTTP GETs with Range headers
 // to implement io.ReadSeeker and io.ReaderAt.
 type SeekingHTTP struct {
 	URL        string
-	Client     *http.Client
-	Debug      bool
+	Client     HttpClient
 	url        *url.URL
 	offset     int64
 	last       *bytes.Buffer
 	lastOffset int64
+	Logger     Logger
 }
 
 // Compile-time check of interface implementations.
@@ -37,7 +45,11 @@ func New(url string) *SeekingHTTP {
 	}
 }
 
-func (s *SeekingHTTP) newreq() (*http.Request, error) {
+func (s *SeekingHTTP) SetLogger(logger Logger) {
+	s.Logger = logger
+}
+
+func (s *SeekingHTTP) newReq() (*http.Request, error) {
 	var err error
 	if s.url == nil {
 		s.url, err = url.Parse(s.URL)
@@ -64,38 +76,37 @@ func fmtRange(from, l int64) string {
 	} else {
 		to = from + (l - 1)
 	}
-	r := fmt.Sprintf("bytes=%v-%v", from, to)
-	return r
+
+	return fmt.Sprintf("bytes=%v-%v", from, to)
 }
 
 // ReadAt reads len(buf) bytes into buf starting at offset off.
 func (s *SeekingHTTP) ReadAt(buf []byte, off int64) (int, error) {
-	if s.Debug {
-		log.Printf("ReadAt len %v off %v", len(buf), off)
+	if s.Logger != nil {
+		s.Logger.Debugf("ReadAt len %v off %v", len(buf), off)
 	}
+
 	if s.last != nil && off > s.lastOffset {
 		end := off + int64(len(buf))
 		if end < s.lastOffset+int64(s.last.Len()) {
 			start := off - s.lastOffset
-			if s.Debug {
-				log.Printf("cache hit: range (%v-%v) is within cache (%v-%v)", off, off+int64(len(buf)), s.lastOffset, s.lastOffset+int64(s.last.Len()))
+			if s.Logger != nil {
+				s.Logger.Debugf("cache hit: range (%v-%v) is within cache (%v-%v)", off, off+int64(len(buf)), s.lastOffset, s.lastOffset+int64(s.last.Len()))
 			}
 			copy(buf, s.last.Bytes()[start:end-s.lastOffset])
 			return len(buf), nil
 		}
 	}
 
-	if s.last != nil {
-		if s.Debug {
-			log.Printf("cache miss: range (%v-%v) is NOT within cache (%v-%v)", off, off+int64(len(buf)), s.lastOffset, s.lastOffset+int64(s.last.Len()))
-		}
-	} else {
-		if s.Debug {
-			log.Printf("cache miss: cache empty")
+	if s.Logger != nil {
+		if s.last != nil {
+			s.Logger.Debugf("cache miss: range (%v-%v) is NOT within cache (%v-%v)", off, off+int64(len(buf)), s.lastOffset, s.lastOffset+int64(s.last.Len()))
+		} else {
+			s.Logger.Debugf("cache miss: cache empty")
 		}
 	}
 
-	req, err := s.newreq()
+	req, err := s.newReq()
 	if err != nil {
 		return 0, err
 	}
@@ -114,9 +125,10 @@ func (s *SeekingHTTP) ReadAt(buf []byte, off int64) (int, error) {
 		s.last.Reset()
 	}
 
-	if s.Debug {
-		log.Println("Start HTTP GET with Range:", rng)
+	if s.Logger != nil {
+		s.Logger.Infof("Start HTTP GET with Range: %s", rng)
 	}
+
 	if err := s.init(); err != nil {
 		return 0, err
 	}
@@ -124,12 +136,22 @@ func (s *SeekingHTTP) ReadAt(buf []byte, off int64) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+
+	if s.Logger != nil {
+		s.Logger.Infof("Response status: %v", resp.StatusCode)
+	}
+
 	if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusPartialContent {
-		if s.Debug {
-			log.Println("HTTP ok.")
+		_, err := s.last.ReadFrom(resp.Body)
+		if err != nil {
+			return 0, err
 		}
-		s.last.ReadFrom(resp.Body)
-		resp.Body.Close()
+
+		err = resp.Body.Close()
+		if err != nil {
+			return 0, err
+		}
+
 		s.lastOffset = off
 		var n int
 		if s.last.Len() < len(buf) {
@@ -161,9 +183,10 @@ func (s *SeekingHTTP) init() error {
 }
 
 func (s *SeekingHTTP) Read(buf []byte) (int, error) {
-	if s.Debug {
-		log.Printf("got read len %v", len(buf))
+	if s.Logger != nil {
+		s.Logger.Debugf("got read len %v", len(buf))
 	}
+
 	n, err := s.ReadAt(buf, s.offset)
 	if err == nil {
 		s.offset += int64(n)
@@ -174,9 +197,10 @@ func (s *SeekingHTTP) Read(buf []byte) (int, error) {
 
 // Seek sets the offset for the next Read.
 func (s *SeekingHTTP) Seek(offset int64, whence int) (int64, error) {
-	if s.Debug {
-		log.Printf("got seek %v %v", offset, whence)
+	if s.Logger != nil {
+		s.Logger.Debugf("got seek %v %v", offset, whence)
 	}
+
 	switch whence {
 	case io.SeekStart:
 		s.offset = offset
@@ -187,6 +211,7 @@ func (s *SeekingHTTP) Seek(offset int64, whence int) (int64, error) {
 	default:
 		return 0, os.ErrInvalid
 	}
+
 	return s.offset, nil
 }
 
@@ -196,7 +221,7 @@ func (s *SeekingHTTP) Size() (int64, error) {
 		return 0, err
 	}
 
-	req, err := s.newreq()
+	req, err := s.newReq()
 	if err != nil {
 		return 0, err
 	}
@@ -210,8 +235,9 @@ func (s *SeekingHTTP) Size() (int64, error) {
 	if resp.ContentLength < 0 {
 		return 0, errors.New("no content length for Size()")
 	}
-	if s.Debug {
-		log.Printf("size %v", resp.ContentLength)
+
+	if s.Logger != nil {
+		s.Logger.Debugf("url: %v, size %v", req.URL.String(), resp.ContentLength)
 	}
 	return resp.ContentLength, nil
 }
