@@ -115,10 +115,10 @@ func (s *SeekingHTTP) ReadAt(buf []byte, off int64) (n int, err error) {
 		return 0, err
 	}
 
-	// Fetch more than what they asked for to reduce round-trips, up to a max of 10 meg
-	wanted := 10 * len(buf)
-	if wanted > 10e6 {
-		wanted = 10e6
+	// Minimum fetch size is 1 meg
+	wanted := 1024 * 1024
+	if wanted < len(buf) {
+		wanted = len(buf)
 	}
 
 	rng := fmtRange(off, int64(wanted))
