@@ -86,9 +86,13 @@ func (s *SeekingHTTP) ReadAt(buf []byte, off int64) (n int, err error) {
 		s.Logger.Debugf("ReadAt len %v off %v", len(buf), off)
 	}
 
+	if off < 0 {
+		return 0, io.EOF
+	}
+
 	if s.last != nil && off > s.lastOffset {
 		end := off + int64(len(buf))
-		if end < s.lastOffset+int64(s.last.Len()) {
+		if end <= s.lastOffset+int64(s.last.Len()) {
 			start := off - s.lastOffset
 			if s.Logger != nil {
 				s.Logger.Debugf("cache hit: range (%v-%v) is within cache (%v-%v)", off, off+int64(len(buf)), s.lastOffset, s.lastOffset+int64(s.last.Len()))
@@ -111,8 +115,12 @@ func (s *SeekingHTTP) ReadAt(buf []byte, off int64) (n int, err error) {
 		return 0, err
 	}
 
-	// Fetch more than what they asked for to reduce round-trips
-	wanted := 10 * len(buf)
+	// Minimum fetch size is 1 meg
+	wanted := 1024 * 1024
+	if wanted < len(buf) {
+		wanted = len(buf)
+	}
+
 	rng := fmtRange(off, int64(wanted))
 	req.Header.Add("Range", rng)
 
@@ -153,6 +161,9 @@ func (s *SeekingHTTP) ReadAt(buf []byte, off int64) (n int, err error) {
 		_, err := s.last.ReadFrom(resp.Body)
 		if err != nil {
 			return 0, err
+		}
+		if s.Logger != nil {
+			s.Logger.Debugf("loaded %d bytes into last", s.last.Len())
 		}
 
 		s.lastOffset = off

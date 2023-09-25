@@ -1,2 +1,3 @@
 *~
-cmd/remote-archive-ls/remote-archive-ls
+cmd/remote-archive-ls/remote-archive-ls*
+.vscode

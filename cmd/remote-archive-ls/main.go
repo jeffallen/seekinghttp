@@ -86,7 +86,7 @@ func main() {
 		}
 
 		for _, f := range z.File {
-			logger.Infof("File: %s", f.FileHeader.Name)
+			fmt.Println(f.FileHeader.Name)
 		}
 		return
 	}
