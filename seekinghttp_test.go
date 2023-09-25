@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -28,25 +30,10 @@ type MockHTTPClient struct {
 }
 
 func (c *MockHTTPClient) Do(req *http.Request) (*http.Response, error) {
-	start := 0
-	end := 0
-	r := req.Header["Range"][0]
-	switch r {
-	case "bytes=0-99":
-		start = 0
-		end = 99
-	case "bytes=30-329":
-		start = 30
-		end = 329
-	case "bytes=10-109":
-		start = 10
-		end = 109
-	case "bytes=20-119":
-		start = 20
-		end = 119
-	default:
-		panic(fmt.Sprintf("unknown range: %s", r))
-	}
+	x := strings.Split(req.Header["Range"][0], "=")
+	y := strings.Split(x[1], "-")
+	start, _ := strconv.Atoi(y[0])
+	end, _ := strconv.Atoi(y[1])
 
 	if end > len(c.str) {
 		end = len(c.str)
